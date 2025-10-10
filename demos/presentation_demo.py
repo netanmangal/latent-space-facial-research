@@ -1,16 +1,22 @@
 """
-Presentation Demo: Variational Autoencoders vs Standard Autoencoders
+Comprehensive Three-Model Presentation Demo
 
-This script provides an interactive demo perfect for research presentations.
-It demonstrates the key differences between discrete and continuous latent spaces.
+This script provides an interactive demo showcasing the evolution of latent spaces:
+1. Standard Autoencoder (Discrete latent space)
+2. Standard VAE (β=1.0 - Continuous but entangled)  
+3. β-VAE (β=4.0 - Continuous + disentangled)
+
+Perfect for research presentations demonstrating latent space progression.
 
 Usage:
     python demos/presentation_demo.py
 
 Controls during presentation:
     - Press 'n' for next demonstration
+    - Press 'p' for previous demonstration
     - Press 'q' to quit
     - Press 's' to save current visualization
+    - Press 'h' for help
 """
 
 import os
@@ -26,21 +32,22 @@ import argparse
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from models.vae_model import VAE
+from models.vae_model import StandardVAE, BetaVAE
 from models.autoencoder_model import StandardAutoencoder
 from models.utils import get_device, load_model_weights, save_image_grid
 from data.celeba_loader import create_demo_dataloader, get_sample_images
 
 
-class PresentationDemo:
+class ThreeModelPresentationDemo:
     """
-    Interactive presentation demo class.
-    Manages the flow of demonstrations and visualizations.
+    Interactive three-model presentation demo class.
+    Demonstrates latent space evolution: Discrete → Continuous → Disentangled
     """
     
-    def __init__(self, vae_model, ae_model, sample_images, device):
-        self.vae_model = vae_model
+    def __init__(self, ae_model, standard_vae_model, beta_vae_model, sample_images, device):
         self.ae_model = ae_model
+        self.standard_vae_model = standard_vae_model
+        self.beta_vae_model = beta_vae_model
         self.sample_images = sample_images
         self.device = device
         

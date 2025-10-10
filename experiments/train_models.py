@@ -17,26 +17,25 @@ import argparse
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from models.vae_model import VAE, BetaVAE, beta_vae_loss_function, vae_loss_function
+from models.vae_model import StandardVAE, BetaVAE, beta_vae_loss_function, vae_loss_function
 from models.autoencoder_model import StandardAutoencoder, autoencoder_loss_function
 from models.utils import get_device, set_seed, save_image_grid
 from data.celeba_loader import create_celeba_dataloaders, create_demo_dataloader
 
 
-def train_beta_vae(model, train_loader, val_loader, device, num_epochs=50, 
-                   learning_rate=1e-3, beta=4.0, save_dir='outputs/models'):
+def train_vae(model, train_loader, val_loader, device, num_epochs=50, 
+              learning_rate=1e-3, model_name='VAE', save_dir='outputs/models'):
     """
-    Train the β-VAE model with enhanced disentanglement.
+    Train VAE models (both StandardVAE and BetaVAE).
     
     Args:
-        model: β-VAE model
+        model: VAE model (StandardVAE or BetaVAE)
         train_loader: Training data loader
         val_loader: Validation data loader
         device: Device to train on
         num_epochs: Number of training epochs
         learning_rate: Learning rate
-        beta: Beta parameter for β-VAE (controls disentanglement vs reconstruction trade-off)
-              β=1.0: Standard VAE, β=4.0: Balanced, β=10.0: High disentanglement
+        model_name: Name of the model for logging
         save_dir: Directory to save model weights
     """
     model.to(device)
@@ -46,12 +45,12 @@ def train_beta_vae(model, train_loader, val_loader, device, num_epochs=50,
     os.makedirs(save_dir, exist_ok=True)
     
     # Tensorboard logging
-    writer = SummaryWriter(f'runs/vae_beta_{beta}')
+    writer = SummaryWriter(f'runs/{model_name.lower()}_beta_{model.beta}')
     
     train_losses = []
     val_losses = []
     
-    print(f"Training VAE with beta={beta} for {num_epochs} epochs...")
+    print(f"Training {model_name} with β={model.beta} for {num_epochs} epochs...")
     
     for epoch in range(num_epochs):
         # Training phase
@@ -67,9 +66,10 @@ def train_beta_vae(model, train_loader, val_loader, device, num_epochs=50,
             optimizer.zero_grad()
             recon_batch, mu, logvar, _ = model(data)
             
-            loss, recon_loss, kl_loss = vae_loss_function(
-                recon_batch, data, mu, logvar, beta
-            )
+            if isinstance(model, StandardVAE):
+                loss, recon_loss, kl_loss = vae_loss_function(recon_batch, data, mu, logvar)
+            else:  # BetaVAE
+                loss, recon_loss, kl_loss = beta_vae_loss_function(recon_batch, data, mu, logvar, model.beta)
             
             loss.backward()
             optimizer.step()
@@ -96,9 +96,10 @@ def train_beta_vae(model, train_loader, val_loader, device, num_epochs=50,
                 data = data.to(device)
                 recon_batch, mu, logvar, _ = model(data)
                 
-                loss, recon_loss, kl_loss = vae_loss_function(
-                    recon_batch, data, mu, logvar, beta
-                )
+                if isinstance(model, StandardVAE):
+                    loss, recon_loss, kl_loss = vae_loss_function(recon_batch, data, mu, logvar)
+                else:  # BetaVAE
+                    loss, recon_loss, kl_loss = beta_vae_loss_function(recon_batch, data, mu, logvar, model.beta)
                 
                 val_loss += loss.item()
                 val_recon_loss += recon_loss.item()
@@ -270,60 +271,100 @@ def main():
             args.data_dir, args.batch_size
         )
     
-    # Create models
-    vae_model = VAE(latent_dim=args.latent_dim)
+    # Create all three models for comprehensive comparison
+    standard_vae = StandardVAE(latent_dim=args.latent_dim)
+    beta_vae = BetaVAE(latent_dim=args.latent_dim)
     ae_model = StandardAutoencoder(latent_dim=args.latent_dim)
     
-    print(f"VAE parameters: {sum(p.numel() for p in vae_model.parameters()):,}")
-    print(f"Autoencoder parameters: {sum(p.numel() for p in ae_model.parameters()):,}")
+    print(f"StandardVAE (β=1.0) parameters: {sum(p.numel() for p in standard_vae.parameters()):,}")
+    print(f"BetaVAE (β=4.0) parameters: {sum(p.numel() for p in beta_vae.parameters()):,}")
+    print(f"StandardAutoencoder parameters: {sum(p.numel() for p in ae_model.parameters()):,}")
     
     # Create output directory
     save_dir = 'outputs/models'
     os.makedirs(save_dir, exist_ok=True)
     
-    # Train VAE
-    print("\n" + "="*50)
-    print("TRAINING β-VAE (Enhanced Disentanglement)")
-    print("="*50)
-    print(f"β parameter: {args.beta} (Higher β → Better disentanglement)")
-    vae_train_losses, vae_val_losses = train_beta_vae(
-        vae_model, train_loader, val_loader, device,
+    # Train Standard VAE (β=1.0)
+    print("\n" + "="*60)
+    print("TRAINING STANDARD VAE (β=1.0 - Continuous but Entangled)")
+    print("="*60)
+    print("Benefits: Continuous latent space vs Autoencoder")
+    standard_vae_train, standard_vae_val = train_vae(
+        standard_vae, train_loader, val_loader, device,
         num_epochs=args.epochs, learning_rate=args.learning_rate,
-        beta=args.beta, save_dir=save_dir
+        model_name='StandardVAE', save_dir=save_dir
     )
     
-    # Train Autoencoder
-    print("\n" + "="*50)
-    print("TRAINING STANDARD AUTOENCODER")
-    print("="*50)
+    # Train Beta VAE (β=4.0)
+    print("\n" + "="*60)
+    print("TRAINING β-VAE (β=4.0 - Continuous AND Disentangled)")
+    print("="*60)
+    print("Benefits: Superior disentanglement vs Standard VAE")
+    beta_vae_train, beta_vae_val = train_vae(
+        beta_vae, train_loader, val_loader, device,
+        num_epochs=args.epochs, learning_rate=args.learning_rate,
+        model_name='BetaVAE', save_dir=save_dir
+    )
+    
+    # Train Standard Autoencoder (Discrete)
+    print("\n" + "="*60)
+    print("TRAINING STANDARD AUTOENCODER (Discrete Latent Space)")
+    print("="*60)
+    print("Baseline: Discrete latent space with limitations")
     ae_train_losses, ae_val_losses = train_autoencoder(
         ae_model, train_loader, val_loader, device,
         num_epochs=args.epochs, learning_rate=args.learning_rate,
         save_dir=save_dir
     )
     
-    # Plot training curves
-    plt.figure(figsize=(12, 5))
+    # Plot comprehensive training curves for all three models
+    plt.figure(figsize=(18, 6))
     
-    plt.subplot(1, 2, 1)
-    plt.plot(vae_train_losses, label='VAE Train')
-    plt.plot(vae_val_losses, label='VAE Val')
-    plt.title('VAE Training Curves')
+    plt.subplot(1, 3, 1)
+    plt.plot(ae_train_losses, label='AE Train', color='red')
+    plt.plot(ae_val_losses, label='AE Val', color='red', linestyle='--')
+    plt.title('Standard Autoencoder\n(Discrete Latent Space)')
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
     plt.legend()
+    plt.grid(True, alpha=0.3)
     
-    plt.subplot(1, 2, 2)
-    plt.plot(ae_train_losses, label='AE Train')
-    plt.plot(ae_val_losses, label='AE Val')
-    plt.title('Autoencoder Training Curves')
+    plt.subplot(1, 3, 2)
+    plt.plot(standard_vae_train, label='Standard VAE Train', color='blue')
+    plt.plot(standard_vae_val, label='Standard VAE Val', color='blue', linestyle='--')
+    plt.title('Standard VAE (β=1.0)\n(Continuous, Entangled)')
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
     plt.legend()
+    plt.grid(True, alpha=0.3)
+    
+    plt.subplot(1, 3, 3)
+    plt.plot(beta_vae_train, label='β-VAE Train', color='green')
+    plt.plot(beta_vae_val, label='β-VAE Val', color='green', linestyle='--')
+    plt.title('β-VAE (β=4.0)\n(Continuous, Disentangled)')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
     
     plt.tight_layout()
-    plt.savefig(f'{save_dir}/training_curves.png', dpi=150)
+    plt.savefig(f'{save_dir}/comprehensive_training_curves.png', dpi=150, bbox_inches='tight')
     plt.show()
+    
+    # Summary comparison
+    print("\n" + "="*80)
+    print("🎯 TRAINING SUMMARY - THREE MODEL COMPARISON")
+    print("="*80)
+    print(f"1. Standard Autoencoder  - Final Loss: {ae_train_losses[-1]:.4f}")
+    print(f"2. Standard VAE (β=1.0)  - Final Loss: {standard_vae_train[-1]:.4f}")
+    print(f"3. β-VAE (β=4.0)         - Final Loss: {beta_vae_train[-1]:.4f}")
+    print("\n🔬 Research Findings:")
+    print("   • Standard AE: Discrete latent space (baseline)")
+    print("   • Standard VAE: Continuous latent space (smooth interpolation)")
+    print("   • β-VAE: Continuous + Disentangled (semantic control)")
+    print("\n💡 Next Steps:")
+    print("   • Run analysis: python notebooks/research_analysis.ipynb")
+    print("   • Run demo: python demos/presentation_demo.py")
     
     print(f"\nTraining completed! Models saved in {save_dir}")
     print("Run the presentation demo with: python demos/presentation_demo.py")

@@ -222,14 +222,59 @@ def beta_vae_loss_function(recon_x, x, mu, logvar, beta=4.0):
     
     return total_loss, recon_loss, kl_loss
 
-# Backward compatibility alias
-vae_loss_function = beta_vae_loss_function
+# Standard VAE loss function (β=1.0)
+def vae_loss_function(recon_x, x, mu, logvar):
+    """
+    Standard VAE loss function with β=1.0.
+    
+    This is used for fair comparison with β-VAE to isolate the effect
+    of the β parameter on disentanglement performance.
+    """
+    return beta_vae_loss_function(recon_x, x, mu, logvar, beta=1.0)
 
-# Backward compatibility: VAE is now β-VAE with default β=4.0
-class VAE(BetaVAE):
+
+class StandardVAE(BetaVAE):
     """
-    Backward compatibility wrapper.
-    Now uses β-VAE with β=4.0 for better disentanglement.
+    Standard VAE with β=1.0 for fair comparison with β-VAE.
+    
+    Uses IDENTICAL architecture to BetaVAE - only difference is β parameter.
+    This ensures fair experimental comparison between standard VAE and β-VAE.
+    
+    Properties:
+    - Continuous latent space (vs discrete Autoencoder)
+    - No disentanglement regularization (β=1.0)
+    - Same encoder/decoder architecture as β-VAE
+    - Perfect for showing β parameter effect on disentanglement
     """
+    
+    def __init__(self, latent_dim=128, image_channels=3, image_size=64):
+        super().__init__(latent_dim, image_channels, image_size, beta=1.0)
+        
+    def __str__(self):
+        return f"StandardVAE(β=1.0, latent_dim={self.latent_dim})"
+
+
+class EnhancedBetaVAE(BetaVAE):
+    """
+    Enhanced β-VAE with β=4.0 for superior disentanglement.
+    
+    Uses IDENTICAL architecture to StandardVAE - only difference is β parameter.
+    This ensures fair experimental comparison.
+    
+    Properties:
+    - Continuous AND disentangled latent space
+    - Enhanced disentanglement regularization (β=4.0)
+    - Same encoder/decoder architecture as StandardVAE
+    - Superior semantic control over facial attributes
+    """
+    
     def __init__(self, latent_dim=128, image_channels=3, image_size=64):
         super().__init__(latent_dim, image_channels, image_size, beta=4.0)
+        
+    def __str__(self):
+        return f"BetaVAE(β=4.0, latent_dim={self.latent_dim})"
+
+
+# Backward compatibility aliases
+VAE = StandardVAE  # Now points to StandardVAE for consistency
+BetaVAE = EnhancedBetaVAE  # Enhanced version is the main β-VAE
