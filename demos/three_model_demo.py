@@ -29,20 +29,94 @@ from models.utils import get_device, set_seed, save_image_grid
 from data.celeba_loader import create_demo_dataloader, get_sample_images
 
 
+def load_trained_model(checkpoint_path, model_type, latent_dim=128, image_size=64, device='cpu'):
+    """Load a trained model from checkpoint"""
+    if not os.path.exists(checkpoint_path):
+        print(f"Warning: Checkpoint not found at {checkpoint_path}")
+        print("Loading untrained model...")
+        
+        # Create untrained model
+        if model_type == 'standard_ae':
+            model = StandardAutoencoder(latent_dim=latent_dim, image_channels=3, image_size=image_size)
+        elif model_type == 'standard_vae':
+            model = StandardVAE(latent_dim=latent_dim, image_channels=3, image_size=image_size)
+        elif model_type == 'beta_vae':
+            model = BetaVAE(latent_dim=latent_dim, image_channels=3, image_size=image_size, beta=4.0)
+        else:
+            raise ValueError(f"Unknown model type: {model_type}")
+        
+        return model.to(device)
+    
+    # Load checkpoint
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    
+    # Create model based on checkpoint info
+    if model_type == 'standard_ae':
+        model = StandardAutoencoder(
+            latent_dim=checkpoint['latent_dim'],
+            image_channels=3,
+            image_size=checkpoint['image_size']
+        )
+    elif model_type == 'standard_vae':
+        model = StandardVAE(
+            latent_dim=checkpoint['latent_dim'],
+            image_channels=3,
+            image_size=checkpoint['image_size']
+        )
+    elif model_type == 'beta_vae':
+        model = BetaVAE(
+            latent_dim=checkpoint['latent_dim'],
+            image_channels=3,
+            image_size=checkpoint['image_size'],
+            beta=checkpoint['beta']
+        )
+    
+    # Load trained weights
+    model.load_state_dict(checkpoint['model_state_dict'])
+    model.to(device)
+    model.eval()
+    
+    print(f"✅ Loaded trained {model_type} from {checkpoint_path}")
+    return model
+
+
 class ThreeModelDemo:
     """
     Interactive demonstration of three model architectures showing
     the evolution from discrete to continuous to disentangled latent spaces.
     """
     
-    def __init__(self, latent_dim=64, device='auto'):
+    def __init__(self, latent_dim=64, device='auto', checkpoint_dir='../models/checkpoints'):
         self.latent_dim = latent_dim
         self.device = get_device() if device == 'auto' else device
+        self.checkpoint_dir = checkpoint_dir
         
-        # Initialize models
-        self.ae_model = StandardAutoencoder(latent_dim=latent_dim).to(self.device)
-        self.standard_vae = StandardVAE(latent_dim=latent_dim).to(self.device)
-        self.beta_vae = BetaVAE(latent_dim=latent_dim).to(self.device)
+        # Load trained models
+        print("🎯 Loading Three-Model Comparison System...")
+        
+        try:
+            # Load Standard Autoencoder
+            ae_checkpoint = os.path.join(checkpoint_dir, 'standard_ae_trained.pth')
+            self.ae_model = load_trained_model(ae_checkpoint, 'standard_ae', latent_dim, 64, self.device)
+            
+            # Load Standard VAE (β=1.0)
+            std_vae_checkpoint = os.path.join(checkpoint_dir, 'standard_vae_trained.pth')
+            self.standard_vae = load_trained_model(std_vae_checkpoint, 'standard_vae', latent_dim, 64, self.device)
+            
+            # Load β-VAE (β=4.0)
+            beta_vae_checkpoint = os.path.join(checkpoint_dir, 'beta_vae_trained.pth')
+            self.beta_vae = load_trained_model(beta_vae_checkpoint, 'beta_vae', latent_dim, 64, self.device)
+            
+            print("✅ All trained models loaded successfully!")
+            
+        except Exception as e:
+            print(f"⚠️  Error loading trained models: {e}")
+            print("Loading untrained models for demonstration...")
+            
+            # Fallback to untrained models
+            self.ae_model = StandardAutoencoder(latent_dim=latent_dim, image_channels=3, image_size=64).to(self.device)
+            self.standard_vae = StandardVAE(latent_dim=latent_dim, image_channels=3, image_size=64).to(self.device)
+            self.beta_vae = BetaVAE(latent_dim=latent_dim, image_channels=3, image_size=64, beta=4.0).to(self.device)
         
         # Load sample data
         self.load_sample_data()
@@ -329,6 +403,8 @@ def main():
     parser = argparse.ArgumentParser(description='Three-Model Latent Space Demo')
     parser.add_argument('--latent_dim', type=int, default=64, help='Latent dimension size')
     parser.add_argument('--device', type=str, default='auto', help='Device to use (auto/cpu/cuda)')
+    parser.add_argument('--checkpoint_dir', type=str, default='../models/checkpoints', 
+                       help='Directory containing trained model checkpoints')
     
     args = parser.parse_args()
     
@@ -336,7 +412,11 @@ def main():
     set_seed(42)
     
     # Initialize and run demo
-    demo = ThreeModelDemo(latent_dim=args.latent_dim, device=args.device)
+    demo = ThreeModelDemo(
+        latent_dim=args.latent_dim, 
+        device=args.device,
+        checkpoint_dir=args.checkpoint_dir
+    )
     demo.run_full_demo()
 
 

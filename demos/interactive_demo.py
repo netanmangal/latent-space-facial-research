@@ -19,10 +19,61 @@ import argparse
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from models.vae_model import VAE
+from models.vae_model import StandardVAE, BetaVAE
 from models.autoencoder_model import StandardAutoencoder
-from models.utils import get_device, load_model_weights
+from models.utils import get_device
 from data.celeba_loader import create_demo_dataloader, get_sample_images
+
+
+def load_trained_model(checkpoint_path, model_type, latent_dim=128, image_size=64, device='cpu'):
+    """Load a trained model from checkpoint"""
+    if not os.path.exists(checkpoint_path):
+        print(f"Warning: Checkpoint not found at {checkpoint_path}")
+        print("Loading untrained model...")
+        
+        # Create untrained model
+        if model_type == 'standard_ae':
+            model = StandardAutoencoder(latent_dim=latent_dim, image_channels=3, image_size=image_size)
+        elif model_type == 'standard_vae':
+            model = StandardVAE(latent_dim=latent_dim, image_channels=3, image_size=image_size)
+        elif model_type == 'beta_vae':
+            model = BetaVAE(latent_dim=latent_dim, image_channels=3, image_size=image_size, beta=4.0)
+        else:
+            raise ValueError(f"Unknown model type: {model_type}")
+        
+        return model.to(device)
+    
+    # Load checkpoint
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    
+    # Create model based on checkpoint info
+    if model_type == 'standard_ae':
+        model = StandardAutoencoder(
+            latent_dim=checkpoint['latent_dim'],
+            image_channels=3,
+            image_size=checkpoint['image_size']
+        )
+    elif model_type == 'standard_vae':
+        model = StandardVAE(
+            latent_dim=checkpoint['latent_dim'],
+            image_channels=3,
+            image_size=checkpoint['image_size']
+        )
+    elif model_type == 'beta_vae':
+        model = BetaVAE(
+            latent_dim=checkpoint['latent_dim'],
+            image_channels=3,
+            image_size=checkpoint['image_size'],
+            beta=checkpoint['beta']
+        )
+    
+    # Load trained weights
+    model.load_state_dict(checkpoint['model_state_dict'])
+    model.to(device)
+    model.eval()
+    
+    print(f"✅ Loaded trained {model_type} from {checkpoint_path}")
+    return model
 
 
 class InteractiveLatentExplorer:
@@ -52,10 +103,22 @@ class InteractiveLatentExplorer:
         
         with torch.no_grad():
             if self.current_model == 'vae':
-                mu, _ = self.vae_model.encode(current_image)
-                self.base_latent = mu.clone()
+                # For VAE models, get the mean of the latent distribution
+                if hasattr(self.vae_model, 'encode'):
+                    mu, _ = self.vae_model.encode(current_image)
+                    self.base_latent = mu.clone()
+                else:
+                    # Handle the case where encode is part of forward pass
+                    _, mu, logvar, _ = self.vae_model(current_image)
+                    self.base_latent = mu.clone()
             else:
-                self.base_latent = self.ae_model.encode(current_image).clone()
+                # For autoencoder, get latent directly
+                if hasattr(self.ae_model, 'encode'):
+                    self.base_latent = self.ae_model.encode(current_image).clone()
+                else:
+                    # Handle different autoencoder interface
+                    latent, _ = self.ae_model(current_image)
+                    self.base_latent = latent.clone()
     
     def setup_gui(self):
         """Setup the GUI interface"""
@@ -207,9 +270,15 @@ class InteractiveLatentExplorer:
         
         with torch.no_grad():
             if self.current_model == 'vae':
-                generated = self.vae_model.decode(current_latent)
+                if hasattr(self.vae_model, 'decode'):
+                    generated = self.vae_model.decode(current_latent)
+                else:
+                    generated = self.vae_model.decoder(current_latent)
             else:
-                generated = self.ae_model.decode(current_latent)
+                if hasattr(self.ae_model, 'decode'):
+                    generated = self.ae_model.decode(current_latent)
+                else:
+                    generated = self.ae_model.decoder(current_latent)
         
         # Convert to displayable image
         img_tensor = generated[0].cpu()
@@ -244,9 +313,15 @@ class InteractiveLatentExplorer:
                 
                 with torch.no_grad():
                     if self.current_model == 'vae':
-                        generated = self.vae_model.decode(current_latent)
+                        if hasattr(self.vae_model, 'decode'):
+                            generated = self.vae_model.decode(current_latent)
+                        else:
+                            generated = self.vae_model.decoder(current_latent)
                     else:
-                        generated = self.ae_model.decode(current_latent)
+                        if hasattr(self.ae_model, 'decode'):
+                            generated = self.ae_model.decode(current_latent)
+                        else:
+                            generated = self.ae_model.decoder(current_latent)
                 
                 # Save full resolution
                 img_tensor = generated[0].cpu()
@@ -344,7 +419,10 @@ class MatplotlibSliderDemo:
         
         # Generate image
         with torch.no_grad():
-            generated = self.model.decode(current_latent)
+            if hasattr(self.model, 'decode'):
+                generated = self.model.decode(current_latent)
+            else:
+                generated = self.model.decoder(current_latent)
         
         # Display
         img_np = generated[0].cpu().permute(1, 2, 0).numpy()
@@ -374,15 +452,15 @@ def main():
     parser = argparse.ArgumentParser(description='Interactive latent space explorer')
     parser.add_argument('--data_dir', type=str, default='data/celeba',
                        help='Path to CelebA dataset')
-    parser.add_argument('--model_dir', type=str, default='outputs/models',
-                       help='Path to trained models')
+    parser.add_argument('--checkpoint_dir', type=str, default='../models/checkpoints',
+                       help='Path to trained model checkpoints')
     parser.add_argument('--latent_dim', type=int, default=128,
                        help='Latent dimension size')
     parser.add_argument('--interface', type=str, default='gui', 
                        choices=['gui', 'matplotlib'],
                        help='Interface type: gui (tkinter) or matplotlib')
-    parser.add_argument('--model_type', type=str, default='both',
-                       choices=['vae', 'ae', 'both'],
+    parser.add_argument('--model_type', type=str, default='standard_vae',
+                       choices=['standard_ae', 'standard_vae', 'beta_vae'],
                        help='Which model to load')
     
     args = parser.parse_args()
@@ -390,42 +468,64 @@ def main():
     # Setup
     device = get_device()
     print(f"Using device: {device}")
+    print(f"🎯 Interactive Demo - Three-Model Comparison System")
     
     # Load data
     try:
         dataloader = create_demo_dataloader(args.data_dir, batch_size=16)
         sample_images = get_sample_images(dataloader, 8, device)
+        print(f"✅ Loaded {sample_images.size(0)} sample images from dataset")
     except Exception as e:
         print(f"Could not load data: {e}")
         print("Using random sample images...")
         sample_images = torch.randn(8, 3, 64, 64).to(device)
         sample_images = torch.sigmoid(sample_images)
     
-    # Load models
-    vae_model = VAE(latent_dim=args.latent_dim)
-    ae_model = StandardAutoencoder(latent_dim=args.latent_dim)
+    # Load all three trained models
+    models = {}
+    model_names = {
+        'standard_ae': 'Standard Autoencoder (Discrete)',
+        'standard_vae': 'Standard VAE (β=1.0 - Continuous)',
+        'beta_vae': 'β-VAE (β=4.0 - Disentangled)'
+    }
     
-    if args.model_type in ['vae', 'both']:
-        vae_weights_path = os.path.join(args.model_dir, 'vae_final.pth')
-        load_model_weights(vae_model, vae_weights_path, device)
-        vae_model.to(device)
+    for model_type in ['standard_ae', 'standard_vae', 'beta_vae']:
+        checkpoint_path = os.path.join(args.checkpoint_dir, f'{model_type}_trained.pth')
+        try:
+            models[model_type] = load_trained_model(
+                checkpoint_path, model_type, args.latent_dim, 64, device
+            )
+            print(f"✅ {model_names[model_type]} loaded successfully")
+        except Exception as e:
+            print(f"❌ Failed to load {model_names[model_type]}: {e}")
+            models[model_type] = None
     
-    if args.model_type in ['ae', 'both']:
-        ae_weights_path = os.path.join(args.model_dir, 'autoencoder_final.pth')
-        load_model_weights(ae_model, ae_weights_path, device)
-        ae_model.to(device)
-    
-    # Run interface
-    if args.interface == 'gui' and args.model_type == 'both':
-        print("Starting interactive GUI explorer...")
-        explorer = InteractiveLatentExplorer(vae_model, ae_model, sample_images, device)
-        explorer.run()
-    else:
-        print("Starting matplotlib slider interface...")
-        if args.model_type == 'vae':
-            demo = MatplotlibSliderDemo(vae_model, sample_images, device, 'VAE')
+    # Run interface based on available models
+    if args.interface == 'gui':
+        # For GUI, we'll use the originally designed two-model interface
+        # but with the requested model and Standard AE as comparison
+        primary_model = models[args.model_type]
+        ae_model = models['standard_ae']
+        
+        if primary_model and ae_model:
+            print(f"Starting interactive GUI explorer...")
+            print(f"Primary model: {model_names[args.model_type]}")
+            print(f"Comparison model: {model_names['standard_ae']}")
+            
+            explorer = InteractiveLatentExplorer(primary_model, ae_model, sample_images, device)
+            explorer.run()
         else:
-            demo = MatplotlibSliderDemo(ae_model, sample_images, device, 'Autoencoder')
+            print("❌ Could not load required models for GUI interface")
+    else:
+        # For matplotlib interface, use the requested model
+        selected_model = models[args.model_type]
+        if selected_model:
+            print(f"Starting matplotlib slider interface...")
+            print(f"Using: {model_names[args.model_type]}")
+            demo = MatplotlibSliderDemo(selected_model, sample_images, device, 
+                                      model_names[args.model_type])
+        else:
+            print(f"❌ Could not load {model_names[args.model_type]}")
 
 
 if __name__ == '__main__':
