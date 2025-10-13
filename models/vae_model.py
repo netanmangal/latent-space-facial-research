@@ -17,7 +17,7 @@ class BetaVAE(nn.Module):
     """
     
     def __init__(self, latent_dim=128, image_channels=3, image_size=64, beta=4.0):
-        super(BetaVAE, self).__init__()
+        super().__init__()
         self.latent_dim = latent_dim
         self.image_channels = image_channels
         self.image_size = image_size
