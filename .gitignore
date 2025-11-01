@@ -140,3 +140,7 @@ dmypy.json
 img_align_celeba/
 list_attr_celeba.txt
 
+*.tex
+*.md
+*.drawio
+*.bib
